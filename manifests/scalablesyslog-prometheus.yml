@@ -1,0 +1,156 @@
+name: prometheus
+instance_groups:
+- name: alertmanager
+  azs: [ z1 ]
+  instances: 1
+  vm_type: default
+  persistent_disk_type: default
+  stemcell: default
+  networks:
+  - name: default
+  jobs:
+    - name: alertmanager
+      release: prometheus
+      properties:
+        alertmanager:
+          route:
+            receiver: default-receiver
+          receivers:
+            - name: default-receiver
+
+- name: prometheus
+  azs: [ z1 ]
+  instances: 1
+  vm_type: default
+  persistent_disk_type: default
+  stemcell: default
+  networks:
+  - name: default
+  jobs:
+  - name: prometheus_alerts
+    release: prometheus
+  - name: prometheus
+    release: prometheus
+    properties:
+      prometheus:
+        rule_files:
+        - /var/vcap/jobs/prometheus_alerts/*.alerts
+        scrape_configs:
+        - job_name: scheduler
+          scheme: https
+          tls_config:
+            - ca_file: /var/vcap/jobs/scheduler/certs/ca.crt
+              cert_file: /var/vcap/jobs/scheduler/certs/scheduler.crt
+              key_file: /var/vcap/jobs/scheduler/certs/scheduler.key
+              insecure_skip_verify: false
+          static_configs:
+          - targets:
+            - 10.244.0.10:8080
+        - job_name: adapter
+          scheme: https
+          tls_config:
+            - ca_file: /var/vcap/jobs/adapter/certs/ca.crt
+              cert_file: /var/vcap/jobs/adapter/certs/adapter.crt
+              key_file: /var/vcap/jobs/adapter/certs/adapter.key
+              insecure_skip_verify: false
+          static_configs:
+          - targets:
+            - 10.244.0.7:8080
+            - 10.244.0.8:8080
+            - 10.244.0.9:8080
+
+
+- name: grafana
+  azs: [ z1 ]
+  instances: 1
+  vm_type: default
+  persistent_disk_type: default
+  stemcell: default
+  networks:
+  - name: default
+  jobs:
+  - name: prometheus_dashboards
+    release: prometheus
+  - name: grafana
+    release: prometheus
+    properties:
+      grafana:
+        database:
+          type: sqlite3
+          path: database.sqlite
+          host: ~
+          name: ~
+          username: ~
+          password: ~
+        security:
+          admin_user: admin
+          admin_password: ((grafana_password))
+          secret_key: ((grafana_secret_key))
+        analytics:
+          reporting_enabled: false
+          check_for_updates: false
+        users:
+          allow_sign_up: false
+          allow_org_create: false
+          auto_assign_org: true
+          auto_assign_org_role: Viewer
+          seeded_global_users: []
+        auth:
+          anonymous:
+            enabled: true
+            org_role: Viewer
+          disable_login_form: false
+          generic_oauth:
+            enabled: true
+            allow_sign_up: true
+        alerting:
+          enabled: false
+        dashboards:
+          json:
+            enabled: true
+        prometheus:
+          dashboard_files:
+          - /var/vcap/jobs/prometheus_dashboards/*.json
+
+- name: nginx
+  azs: [ z1 ]
+  instances: 1
+  vm_type: default
+  stemcell: default
+  networks:
+  - name: default
+  jobs:
+    - name: nginx
+      release: prometheus
+      properties:
+        nginx:
+          alertmanager:
+            auth_username: admin
+            auth_password: ((alertmanager_password))
+          prometheus:
+            auth_username: admin
+            auth_password: ((prometheus_password))
+
+variables:
+- name: grafana_password
+  type: password
+- name: grafana_secret_key
+  type: password
+- name: alertmanager_password
+  type: password
+- name: prometheus_password
+  type: password
+
+releases:
+- name: prometheus
+  version: latest
+update:
+  canaries: 1
+  max_in_flight: 32
+  canary_watch_time: 1000-30000
+  update_watch_time: 1000-30000
+  serial: false
+stemcells:
+- alias: default
+  os: ubuntu-trusty
+  version: latest
